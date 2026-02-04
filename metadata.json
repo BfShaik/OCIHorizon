@@ -1,0 +1,5 @@
+{
+  "name": "Horizon OCI",
+  "description": "A strategic architectural copilot that maps the OCI release roadmap directly to customer consumption data, providing automated optimization and security insights.",
+  "requestFramePermissions": []
+}
