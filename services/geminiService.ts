@@ -1,7 +1,47 @@
-import { GoogleGenAI, Type } from "@google/genai";
 import { OCIConsumptionRow, ReleaseNote, StrategicInsight } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// OCI Generative AI Configuration
+const OCI_ENDPOINT = "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com";
+const OCI_API_KEY = process.env.OCI_GENAI_API_KEY || "";
+const COMPARTMENT_ID = process.env.OCI_COMPARTMENT_ID || "";
+
+// Helper function to make OCI API calls
+async function callOCIInference(modelId: string, prompt: string, tools?: any[], responseSchema?: any) {
+  const payload: any = {
+    modelId,
+    compartmentId: COMPARTMENT_ID,
+    prompt,
+    inferenceRequestType: "ON_DEMAND",
+    runtimeParams: {
+      temperature: 0.7,
+      maxOutputTokens: 2048
+    }
+  };
+
+  if (tools && tools.length > 0) {
+    payload.tools = tools;
+  }
+
+  if (responseSchema) {
+    payload.responseSchema = responseSchema;
+  }
+
+  const response = await fetch(`${OCI_ENDPOINT}/inference/generateText`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${OCI_API_KEY}`
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    throw new Error(`OCI API error: ${response.status} ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  return data.generatedTexts?.[0]?.text || "";
+}
 
 export const summarizeAndMatch = async (
   currentNotes: ReleaseNote[],
@@ -19,14 +59,14 @@ export const summarizeAndMatch = async (
   `;
 
   try {
-    const searchResponse = await ai.models.generateContent({
-      model: "gemini-3-pro-preview",
-      contents: searchPrompt,
-      config: { tools: [{ googleSearch: {} }] }
-    });
+    // Use OCI Gemini 2.5 Pro for search with Google Search tool
+    const rawSearchData = await callOCIInference(
+      "google.gemini-2.5-pro",
+      searchPrompt,
+      [{ googleSearch: {} }]
+    );
 
-    const rawSearchData = searchResponse.text;
-    const groundingMetadata = searchResponse.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    const groundingMetadata = []; // OCI may not return grounding metadata in the same format
 
     const structPrompt = `
       Map these release notes to this customer footprint: ${JSON.stringify(topSkus.map(s => s.productName))}.
@@ -34,37 +74,36 @@ export const summarizeAndMatch = async (
       Return a JSON array of matched notes with a matchScore (0-100).
     `;
 
-    const structResponse = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: structPrompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              title: { type: Type.STRING },
-              date: { type: Type.STRING },
-              service: { type: Type.STRING },
-              summary: { type: Type.STRING },
-              url: { type: Type.STRING },
-              matchScore: { type: Type.NUMBER }
-            },
-            required: ["title", "date", "service", "summary", "url", "matchScore"]
-          }
+    // Use OCI Gemini 2.5 Flash for structured JSON response
+    const structResponse = await callOCIInference(
+      "google.gemini-2.5-flash",
+      structPrompt,
+      [],
+      {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            title: { type: "string" },
+            date: { type: "string" },
+            service: { type: "string" },
+            summary: { type: "string" },
+            url: { type: "string" },
+            matchScore: { type: "number" }
+          },
+          required: ["title", "date", "service", "summary", "url", "matchScore"]
         }
       }
-    });
+    );
 
-    const results = JSON.parse(structResponse.text || "[]");
-    return { 
+    const results = JSON.parse(structResponse || "[]");
+    return {
       notes: results.map((res: any, idx: number) => ({
         id: `live-${idx}-${Date.now()}`,
         ...res,
         isRelevant: res.matchScore > 50
       })),
-      groundingSources: groundingMetadata 
+      groundingSources: groundingMetadata
     };
   } catch (error) {
     console.error("Performance issue in Scraper:", error);
@@ -85,30 +124,29 @@ export const generateInsights = async (
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              type: { type: Type.STRING, enum: ['optimization', 'security', 'architecture', 'cost', 'growth'] },
-              title: { type: Type.STRING },
-              description: { type: Type.STRING },
-              impact: { type: Type.STRING, enum: ['high', 'medium', 'low'] },
-              actionLabel: { type: Type.STRING },
-              savings: { type: Type.STRING }
-            },
-            required: ["type", "title", "description", "impact", "actionLabel"]
-          }
+    const response = await callOCIInference(
+      "google.gemini-2.5-flash",
+      prompt,
+      [],
+      {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            type: { type: "string", enum: ['optimization', 'security', 'architecture', 'cost', 'growth'] },
+            title: { type: "string" },
+            description: { type: "string" },
+            impact: { type: "string", enum: ['high', 'medium', 'low'] },
+            actionLabel: { type: "string" },
+            savings: { type: "string" }
+          },
+          required: ["type", "title", "description", "impact", "actionLabel"]
         }
       }
-    });
-    return JSON.parse(response.text || "[]");
+    );
+    return JSON.parse(response || "[]");
   } catch (error) {
+    console.error("Insights generation error:", error);
     return [];
   }
 };
@@ -120,12 +158,13 @@ export const generateEmailDigest = async (
 ): Promise<string> => {
   const prompt = `Generate a high-level OCI Strategy Email for ${customerName} based on these insights: ${JSON.stringify(insights.map(i => i.title))}. Use HTML formatting.`;
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: prompt
-    });
-    return response.text || "Synthesis failed.";
+    const response = await callOCIInference(
+      "google.gemini-2.5-flash",
+      prompt
+    );
+    return response || "Synthesis failed.";
   } catch (error) {
+    console.error("Email generation error:", error);
     return "Email generation error.";
   }
 };

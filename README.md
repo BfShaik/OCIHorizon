@@ -33,9 +33,9 @@ Insights are synthesized into four architectural pillars:
 ## 🛠️ Technical Stack
 - **Framework:** React 19 (Hooks-based state management)
 - **Styling:** Tailwind CSS (Modern "Command Center" aesthetic with Dark Mode)
-- **AI Engine:** Google Gemini API (`@google/genai`)
-  - *Gemini 3 Pro:* Research & Search Grounding
-  - *Gemini 3 Flash:* High-speed JSON structuring & Synthesis
+- **AI Engine:** OCI Generative AI (Google Gemini models hosted on OCI)
+  - *google.gemini-2.5-pro:* Research & Search Grounding via OCI
+  - *google.gemini-2.5-flash:* High-speed JSON structuring & Synthesis via OCI
 - **Data Ingestion:** PapaParse (Client-side CSV processing)
 - **Data Viz:** Recharts (Cost Spectrum Mapping)
 
@@ -63,8 +63,12 @@ Insights are synthesized into four architectural pillars:
 ---
 
 ## ⚙️ Setup & Deployment
-1. Ensure the environment variable `process.env.API_KEY` is configured with a valid Google Gemini API Key.
-2. The app uses the native `@google/genai` SDK for all model interactions.
+1. Configure OCI environment variables in `.env.local`:
+   ```bash
+   OCI_GENAI_API_KEY=your-oci-api-key-here
+   OCI_COMPARTMENT_ID=your-compartment-ocid-here
+   ```
+2. The app uses OCI Generative AI with Google Gemini models hosted on OCI infrastructure.
 3. To initialize the repository:
 ```bash
 git init
